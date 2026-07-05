@@ -63,6 +63,13 @@ public class Supplier implements Serializable {
         suppliedSkus.add(sku.trim().toUpperCase());
     }
 
+    public void unassignSku(String sku) {
+        if (sku == null || sku.isBlank()) {
+            throw new DomainException("SKU cannot be blank");
+        }
+        suppliedSkus.remove(sku.trim().toUpperCase());
+    }
+
     public boolean canSupply(String sku) {
         if (sku == null || sku.isBlank()) {
             return false;

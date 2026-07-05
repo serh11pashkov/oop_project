@@ -46,6 +46,26 @@ public class InventoryService {
         return productRepository.deleteById(normalize(sku));
     }
 
+    public boolean deleteSupplier(String supplierId) {
+        return supplierRepository.deleteById(normalize(supplierId));
+    }
+
+    public Supplier unassignSupplierSku(String supplierId, String sku) {
+        Supplier supplier = supplierRepository.findById(normalize(supplierId))
+                .orElseThrow(() -> new DomainException("Supplier not found: " + supplierId));
+        supplier.unassignSku(sku);
+        return supplierRepository.save(supplier);
+    }
+
+    public boolean deleteInvoice(String invoiceId) {
+        Invoice invoice = invoiceRepository.findById(normalize(invoiceId))
+                .orElseThrow(() -> new DomainException("Invoice not found: " + invoiceId));
+        if (invoice.getStatus() == InvoiceStatus.APPROVED) {
+            rollbackStockMovement(invoice);
+        }
+        return invoiceRepository.deleteById(normalize(invoiceId));
+    }
+
     public Supplier registerSupplier(Supplier supplier) {
         if (supplierRepository.findById(supplier.getSupplierId()).isPresent()) {
             throw new DomainException("Supplier already exists with ID: " + supplier.getSupplierId());
@@ -174,6 +194,20 @@ public class InventoryService {
                 product.decreaseStock(item.getQuantity());
             }
             productRepository.save(product);
+        }
+    }
+
+    private void rollbackStockMovement(Invoice invoice) {
+        for (InvoiceItem item : invoice.getItems()) {
+            Product product = productRepository.findById(normalize(item.getSku())).orElse(null);
+            if (product != null) {
+                if (invoice.getType() == InvoiceType.INCOMING) {
+                    product.decreaseStock(item.getQuantity());
+                } else {
+                    product.increaseStock(item.getQuantity());
+                }
+                productRepository.save(product);
+            }
         }
     }
 
