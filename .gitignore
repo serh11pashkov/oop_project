@@ -1,0 +1,13 @@
+# Build output
+/target/
+
+# Local backup file created by the app
+warehouse-data.bin
+
+# IntelliJ IDEA
+.idea/
+*.iml
+
+# Local environment files
+.env
+.env.*
