@@ -2,6 +2,7 @@ package edu.university.warehouse;
 
 import edu.university.warehouse.exception.DomainException;
 import edu.university.warehouse.model.*;
+import edu.university.warehouse.persistence.MongoConnectionManager;
 import edu.university.warehouse.persistence.WarehouseDataStore;
 import edu.university.warehouse.persistence.WarehouseState;
 import edu.university.warehouse.repository.InvoiceRepository;
@@ -10,6 +11,9 @@ import edu.university.warehouse.repository.SupplierRepository;
 import edu.university.warehouse.repository.memory.InMemoryInvoiceRepository;
 import edu.university.warehouse.repository.memory.InMemoryProductRepository;
 import edu.university.warehouse.repository.memory.InMemorySupplierRepository;
+import edu.university.warehouse.repository.mongodb.MongoInvoiceRepository;
+import edu.university.warehouse.repository.mongodb.MongoProductRepository;
+import edu.university.warehouse.repository.mongodb.MongoSupplierRepository;
 import edu.university.warehouse.service.InventoryService;
 
 import javafx.application.Application;
@@ -38,6 +42,13 @@ public class WarehouseFxApplication extends Application {
     private InventoryService service;
     private WarehouseDataStore dataStore;
     private Stage primaryStage;
+    private boolean useMongo = false;
+
+    private void saveState() {
+        if (!useMongo) {
+            dataStore.save(service);
+        }
+    }
 
     // Observable Lists for TableViews
     private final ObservableList<Product> observableProducts = FXCollections.observableArrayList();
@@ -63,9 +74,29 @@ public class WarehouseFxApplication extends Application {
 
         // Initialize backend and persistence
         dataStore = new WarehouseDataStore(Path.of("warehouse-data.bin"));
-        ProductRepository productRepository = new InMemoryProductRepository();
-        SupplierRepository supplierRepository = new InMemorySupplierRepository();
-        InvoiceRepository invoiceRepository = new InMemoryInvoiceRepository();
+        
+        ProductRepository productRepository;
+        SupplierRepository supplierRepository;
+        InvoiceRepository invoiceRepository;
+        
+        if (MongoConnectionManager.isConnected()) {
+            useMongo = true;
+            productRepository = new MongoProductRepository(MongoConnectionManager.getDatabase());
+            supplierRepository = new MongoSupplierRepository(MongoConnectionManager.getDatabase());
+            invoiceRepository = new MongoInvoiceRepository(MongoConnectionManager.getDatabase());
+        } else {
+            useMongo = false;
+            productRepository = new InMemoryProductRepository();
+            supplierRepository = new InMemorySupplierRepository();
+            invoiceRepository = new InMemoryInvoiceRepository();
+            
+            Alert alert = new Alert(Alert.AlertType.WARNING);
+            alert.setTitle("Помилка підключення до БД");
+            alert.setHeaderText("Не вдалося підключитися до MongoDB");
+            alert.setContentText("Помилка: " + MongoConnectionManager.getErrorMessage() + "\nДодаток працюватиме у локальному In-Memory режимі.");
+            alert.showAndWait();
+        }
+
         service = new InventoryService(productRepository, supplierRepository, invoiceRepository);
 
         // Load pre-existing data or seed demo data
@@ -101,13 +132,19 @@ public class WarehouseFxApplication extends Application {
     }
 
     private void prepareInitialData() {
-        Optional<WarehouseState> state = dataStore.load();
-        state.ifPresent(warehouseState -> dataStore.loadInto(service, warehouseState));
+        if (useMongo) {
+            if (service.getAllProducts().isEmpty()) {
+                seedDemoData();
+            }
+        } else {
+            Optional<WarehouseState> state = dataStore.load();
+            state.ifPresent(warehouseState -> dataStore.loadInto(service, warehouseState));
 
-        if (service.getAllProducts().isEmpty()) {
-            seedDemoData();
+            if (service.getAllProducts().isEmpty()) {
+                seedDemoData();
+            }
+            saveState();
         }
-        dataStore.save(service);
     }
 
     private void seedDemoData() {
@@ -579,7 +616,7 @@ public class WarehouseFxApplication extends Application {
                 if (result.isPresent() && result.get() == ButtonType.OK) {
                     try {
                         service.deleteProduct(selected.getSku());
-                        dataStore.save(service);
+                        saveState();
                         observableProducts.setAll(service.getAllProducts());
                         showInfoAlert("Успішно", "Товар було успішно видалено.");
                     } catch (DomainException ex) {
@@ -659,7 +696,7 @@ public class WarehouseFxApplication extends Application {
 
                 Product p = new Product(sku, name, category, price, qty, reorder);
                 service.registerProduct(p);
-                dataStore.save(service);
+                saveState();
 
                 observableProducts.setAll(service.getAllProducts());
                 dialog.close();
@@ -703,6 +740,7 @@ public class WarehouseFxApplication extends Application {
         categoryCombo.setValue(product.getCategory());
 
         TextField priceInput = new TextField(product.getUnitPrice().toString());
+        TextField qtyInput = new TextField(String.valueOf(product.getQuantityInStock()));
         TextField reorderInput = new TextField(String.valueOf(product.getReorderLevel()));
 
         grid.add(new Label("Артикул (SKU) [Нередагований]:"), 0, 0);
@@ -713,12 +751,14 @@ public class WarehouseFxApplication extends Application {
         grid.add(categoryCombo, 1, 2);
         grid.add(new Label("Ціна за одиницю (₴):"), 0, 3);
         grid.add(priceInput, 1, 3);
-        grid.add(new Label("Критичний ліміт:"), 0, 4);
-        grid.add(reorderInput, 1, 4);
+        grid.add(new Label("Поточний запас (Кількість):"), 0, 4);
+        grid.add(qtyInput, 1, 4);
+        grid.add(new Label("Критичний ліміт:"), 0, 5);
+        grid.add(reorderInput, 1, 5);
 
         Label errorLabel = new Label();
         errorLabel.setStyle("-fx-text-fill: #f87171; -fx-font-weight: bold;");
-        grid.add(errorLabel, 0, 5, 2, 1);
+        grid.add(errorLabel, 0, 6, 2, 1);
 
         Button btnSave = new Button("Оновити");
         btnSave.getStyleClass().add("btn-primary");
@@ -727,23 +767,24 @@ public class WarehouseFxApplication extends Application {
 
         HBox buttonBox = new HBox(10, btnSave, btnCancel);
         buttonBox.setAlignment(Pos.CENTER_RIGHT);
-        grid.add(buttonBox, 1, 6);
+        grid.add(buttonBox, 1, 7);
 
         btnSave.setOnAction(e -> {
             try {
                 String name = nameInput.getText();
                 ProductCategory category = categoryCombo.getValue();
                 BigDecimal price = new BigDecimal(priceInput.getText());
+                int qty = Integer.parseInt(qtyInput.getText());
                 int reorder = Integer.parseInt(reorderInput.getText());
 
-                service.updateProduct(product.getSku(), name, category, price, reorder);
-                dataStore.save(service);
+                service.updateProduct(product.getSku(), name, category, price, qty, reorder);
+                saveState();
 
                 observableProducts.setAll(service.getAllProducts());
                 dialog.close();
                 showInfoAlert("Успіх", "Товар успішно оновлено!");
             } catch (NumberFormatException ex) {
-                errorLabel.setText("Ціна та ліміт мають бути числовими значеннями!");
+                errorLabel.setText("Ціна, кількість та ліміт мають бути числовими значеннями!");
             } catch (DomainException ex) {
                 errorLabel.setText(ex.getMessage());
             } catch (Exception ex) {
@@ -753,7 +794,7 @@ public class WarehouseFxApplication extends Application {
 
         btnCancel.setOnAction(e -> dialog.close());
 
-        Scene scene = new Scene(grid, 460, 360);
+        Scene scene = new Scene(grid, 460, 400);
         try {
             scene.getStylesheets().add(getClass().getResource("/style.css").toExternalForm());
         } catch (Exception ignored) {}
@@ -875,7 +916,7 @@ public class WarehouseFxApplication extends Application {
                 if (result.isPresent() && result.get() == ButtonType.OK) {
                     try {
                         service.deleteSupplier(selected.getSupplierId());
-                        dataStore.save(service);
+                        saveState();
                         observableSuppliers.setAll(service.getAllSuppliers());
                         showInfoAlert("Успішно", "Постачальника було успішно видалено.");
                     } catch (DomainException ex) {
@@ -943,7 +984,7 @@ public class WarehouseFxApplication extends Application {
 
                 Supplier s = new Supplier(id, name, email, phone);
                 service.registerSupplier(s);
-                dataStore.save(service);
+                saveState();
 
                 observableSuppliers.setAll(service.getAllSuppliers());
                 dialog.close();
@@ -1006,7 +1047,7 @@ public class WarehouseFxApplication extends Application {
         btnSave.setOnAction(e -> {
             try {
                 supplier.updateContact(emailInput.getText(), phoneInput.getText());
-                dataStore.save(service);
+                saveState();
 
                 observableSuppliers.setAll(service.getAllSuppliers());
                 dialog.close();
@@ -1076,7 +1117,7 @@ public class WarehouseFxApplication extends Application {
                 }
                 String sku = selectedItem.split(" - ")[0];
                 supplier.assignSku(sku);
-                dataStore.save(service);
+                saveState();
 
                 observableSuppliers.setAll(service.getAllSuppliers());
                 dialog.close();
@@ -1148,7 +1189,7 @@ public class WarehouseFxApplication extends Application {
                 }
                 String sku = selectedItem.split(" - ")[0];
                 service.unassignSupplierSku(supplier.getSupplierId(), sku);
-                dataStore.save(service);
+                saveState();
 
                 observableSuppliers.setAll(service.getAllSuppliers());
                 dialog.close();
@@ -1381,7 +1422,7 @@ public class WarehouseFxApplication extends Application {
             if (selectedInvoice != null) {
                 try {
                     service.approveInvoice(selectedInvoice.getInvoiceId());
-                    dataStore.save(service);
+                    saveState();
 
                     // Refresh Views
                     Invoice updated = service.getAllInvoices().stream()
@@ -1410,7 +1451,7 @@ public class WarehouseFxApplication extends Application {
                             .findFirst().orElse(null);
                     if (inv != null) {
                         inv.cancel();
-                        dataStore.save(service);
+                        saveState();
                     }
 
                     int selectedIdx = invoicesTable.getSelectionModel().getSelectedIndex();
@@ -1442,7 +1483,7 @@ public class WarehouseFxApplication extends Application {
                 if (result.isPresent() && result.get() == ButtonType.OK) {
                     try {
                         service.deleteInvoice(selectedInvoice.getInvoiceId());
-                        dataStore.save(service);
+                        saveState();
                         observableInvoices.setAll(service.getAllInvoices());
                         invoicesTable.getSelectionModel().clearSelection();
                         showInfoAlert("Успішно", "Накладну вилучено з системи та проведено відкат запасів.");
@@ -1519,7 +1560,7 @@ public class WarehouseFxApplication extends Application {
                 }
 
                 Invoice invoice = service.createInvoice(type, supplierId);
-                dataStore.save(service);
+                saveState();
 
                 observableInvoices.setAll(service.getAllInvoices());
                 table.getSelectionModel().select(invoice);
@@ -1644,7 +1685,7 @@ public class WarehouseFxApplication extends Application {
                 }
 
                 service.addInvoiceItem(invoice.getInvoiceId(), sku, qty, price);
-                dataStore.save(service);
+                saveState();
 
                 // Refresh details
                 int selectedIdx = invoiceTable.getSelectionModel().getSelectedIndex();

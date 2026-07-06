@@ -6,6 +6,7 @@ import edu.university.warehouse.model.InvoiceType;
 import edu.university.warehouse.model.Product;
 import edu.university.warehouse.model.ProductCategory;
 import edu.university.warehouse.model.Supplier;
+import edu.university.warehouse.persistence.MongoConnectionManager;
 import edu.university.warehouse.persistence.WarehouseDataStore;
 import edu.university.warehouse.service.InventoryService;
 
@@ -152,9 +153,10 @@ public class WarehouseConsoleMenu {
             String name = readString(scanner, "Нова назва");
             ProductCategory category = readCategory(scanner);
             BigDecimal unitPrice = readBigDecimal(scanner, "Нова ціна за одиницю");
+            int quantity = readInt(scanner, "Нова кількість на складі");
             int reorderLevel = readInt(scanner, "Новий рівень для замовлення");
 
-            service.updateProduct(sku, name, category, unitPrice, reorderLevel);
+            service.updateProduct(sku, name, category, unitPrice, quantity, reorderLevel);
             saveDataSilently();
             System.out.println("Товар оновлено.");
         } catch (Exception exception) {
@@ -186,12 +188,18 @@ public class WarehouseConsoleMenu {
     }
 
     private void saveData() {
-        dataStore.save(service);
-        System.out.println("Дані збережено.");
+        if (!MongoConnectionManager.isConnected()) {
+            dataStore.save(service);
+            System.out.println("Дані збережено.");
+        } else {
+            System.out.println("Дані автоматично збережено в MongoDB.");
+        }
     }
 
     private void saveDataSilently() {
-        dataStore.save(service);
+        if (!MongoConnectionManager.isConnected()) {
+            dataStore.save(service);
+        }
     }
 
     private void printProducts(String title, List<Product> products) {

@@ -36,9 +36,10 @@ public class InventoryService {
         return productRepository.save(product);
     }
 
-    public Product updateProduct(String sku, String name, ProductCategory category, BigDecimal unitPrice, int reorderLevel) {
+    public Product updateProduct(String sku, String name, ProductCategory category, BigDecimal unitPrice, int quantityInStock, int reorderLevel) {
         Product product = findProduct(sku);
         product.updateDetails(name, category, unitPrice, reorderLevel);
+        product.setQuantityInStock(quantityInStock);
         return productRepository.save(product);
     }
 

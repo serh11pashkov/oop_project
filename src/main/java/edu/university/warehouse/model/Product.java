@@ -89,6 +89,13 @@ public class Product implements Serializable {
         this.reorderLevel = reorderLevel;
     }
 
+    public void setQuantityInStock(int quantityInStock) {
+        if (quantityInStock < 0) {
+            throw new DomainException("Quantity in stock cannot be negative");
+        }
+        this.quantityInStock = quantityInStock;
+    }
+
     public void increaseStock(int amount) {
         if (amount <= 0) {
             throw new DomainException("Stock increase amount must be positive");
